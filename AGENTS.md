@@ -10,6 +10,7 @@
 | --- | --- |
 | 有哪些书拆过？某种写法在哪些章节有证据？ | 已知参考书就读该书的 `analysis-state.yaml` 和 `pattern-cards.md`。跨书查询用[拆书检索](docs/book-workspaces.md#查拆书资料)，按题材浏览用[拆书成果索引](../ani-book-skill/analyses/README.md)。 |
 | 新书怎样借用参考机制？已有作品该接哪一卷、哪一章？ | 新书直接查[机制迁移方法](../ani-book-skill/references/analysis-to-novel.md)。接续已有作品，读其状态文件的 `next_action` 及 `artifacts` 登记的计划。[原创规划定位](docs/book-workspaces.md#查原创规划) |
+| 怎样让 Codex 生成大纲、用 Cursor 独立评分，低分后再优化创作流程？ | 从[大纲流程优化实验](ani-book-skill/README.md)启动。本仓的 `ani-book-skill/` 管量表、裁判、循环和记录，同级项目 `../ani-book-skill/` 是每轮建立 worktree 的优化对象。 |
 | 大纲导入漏了一章、章节分错卷，或要核对采用的修订？ | 查[Web 功能与路径](docs/web-handoff.md#功能与路径)，从导入预览或原书绑定定位。上次交接的来源和版本查[交接记录](docs/web-handoff.md#交接记录)。 |
 | Web 已写到哪章，正文和审校结果在哪？ | 在目标环境的 `/novels` 找到作品，进入目标章节。[章节页与实现位置](docs/web-handoff.md#功能与路径) · [单章审校依据](docs/evaluation.md#查单章审校) |
 | 想比较两版章纲的生成效果？ | 查[跨版本实验方法（规划中）](docs/evaluation.md#一轮实验怎么做)。 |
