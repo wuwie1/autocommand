@@ -1,5 +1,0 @@
-.worktrees/
-__pycache__/
-results/.ledger.lock
-results/*/.run.lock
-results/.init-*/
