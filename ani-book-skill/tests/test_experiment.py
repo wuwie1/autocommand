@@ -94,6 +94,8 @@ else:
                   "opening":[{"title":"留灯","plan":"她选择留一盏灯。"} for _ in range(seed["opening_chapters"])],
                   "transfers":[{"book":r["book"],"file":r["files"][0],"anchor":r["anchor"],"use":"交给原创人物。"}
                                for r in seed["references"]]}
+        if mode == "improve" and tag == "已传入新规":
+            result["title"] = "归渡"
         if followed:
             result["transfers"][-1].update(file="sections/局限.md", anchor="证据限度")
     Path(flag("-o")).write_text(json.dumps(result,ensure_ascii=False))
@@ -110,6 +112,11 @@ class ExperimentTests(unittest.TestCase):
         self.case_path = run.HERE / "cases/三书玄幻.json"
         self.case = run.load(self.case_path)
         self.rubric = run.load(run.HERE / "rubric.json")
+        # Isolate the 79/80 boundary exercised by the CLI doubles from the author's live thresholds.
+        for dimension in self.rubric["dimensions"]:
+            dimension["minimum"] = 80
+        self.rubric_path = self.root / "rubric.json"
+        run.save(self.rubric_path, self.rubric)
         self.events = self.root / "events"
         self.prompts = self.root / "prompts"
         bin_dir = self.root / "bin"
@@ -146,7 +153,7 @@ class ExperimentTests(unittest.TestCase):
     def execute(self, mode, maximum, identifier="fixture", base="HEAD", judgments=2):
         os.environ["ANI_TEST_MODE"] = mode
         args = argparse.Namespace(id=identifier, project=self.repo, base=base, case=self.case_path,
-                                  rubric=run.HERE / "rubric.json", max_optimizations=maximum,
+                                  rubric=self.rubric_path, max_optimizations=maximum,
                                   judgments=judgments, generator_model=None, timeout=30)
         with contextlib.redirect_stdout(io.StringIO()):
             run.start(args)
@@ -191,7 +198,15 @@ class ExperimentTests(unittest.TestCase):
         self.assertIn("已传入新规", run.read(self.exp / "round-001/总纲.md"))
         self.assertNotIn("明确代价", run.read(self.repo / "references/story-and-volume-planning.md"))
         self.assertEqual(wt.git(self.repo, "branch", "--show-current").strip(), "main")
-        self.assertEqual(wt.git(self.repo, "status", "--porcelain"), "")
+        self.assertEqual(wt.git(self.repo, "status", "--porcelain").strip(), "?? novels_version/")
+        for rec in rows:
+            version = self.repo / rec["novel_version"]
+            directory = run.rdir(self.exp, rec["round"])
+            self.assertEqual(version, self.repo / "novels_version" / "留灯" / (directory.name + "-fixture"))
+            for name in (*a.PRODUCTS, run.CITED, "plan.json"):
+                self.assertEqual((version / name).read_bytes(), (directory / name).read_bytes())
+        self.assertEqual(run.load(self.repo / rows[1]["novel_version"] / "plan.json")["title"], "归渡")
+        self.assertIn("[书稿目录]", table)
 
     def test_budget_preserves_all_worktrees_and_human_can_select_any_scored_version(self):
         self.execute("flat", 2)
@@ -212,6 +227,7 @@ class ExperimentTests(unittest.TestCase):
             self.execute("bad-quote", 0)
         self.assertEqual(self.ledger()[0]["score"], "")
         self.assertFalse((self.exp / "round-000/score.json").exists())
+        self.assertTrue((self.repo / "novels_version/留灯/round-000-fixture/总纲.md").is_file())
         # Both rejected answers stay on disk for the author to read.
         self.assertEqual(len(list((self.exp / "round-000/judge-raw").iterdir())), 2)
         self.resume("flat", timeout=77)
@@ -283,6 +299,42 @@ class ExperimentTests(unittest.TestCase):
         self.assertNotEqual(baseline, in_loop)
         self.assertEqual(in_loop, replayed)
         self.assertIn("已传入新规", run.read(run.run_path("replay") / "round-000/总纲.md"))
+        book = self.repo / "novels_version/留灯"
+        self.assertIn("初稿", run.read(book / "round-000-fixture/总纲.md"))
+        self.assertIn("已传入新规", run.read(book / "round-000-replay/总纲.md"))
+
+    def test_archive_backfills_old_runs_and_preserves_reader_edits(self):
+        self.execute("pass", 0)
+        rec = run.trials(self.exp)[0]
+        directory = self.exp / "round-000"
+        version = self.repo / rec.pop("novel_version")
+        shutil.rmtree(version)
+        run.save(directory / "round.json", rec)
+        calls = self.events.read_text()
+        original = (directory / "总纲.md").read_bytes()
+        with contextlib.redirect_stdout(io.StringIO()):
+            run.archive(self.exp)
+            self.assertEqual((version / "总纲.md").read_bytes(), original)
+            run.write(version / "总纲.md", "作者的改稿。")
+            (version / "分卷.md").unlink()
+            run.archive(self.exp)
+        self.assertEqual(run.read(version / "总纲.md"), "作者的改稿。")
+        self.assertEqual((version / "分卷.md").read_bytes(), (directory / "分卷.md").read_bytes())
+        self.assertEqual((directory / "总纲.md").read_bytes(), original)
+        self.assertTrue(run.verified_score(directory, rec)["passed"])
+        self.assertEqual(self.events.read_text(), calls)
+
+    def test_archive_stays_under_project_for_unusual_titles_and_symlinks(self):
+        for title in ("../别处/书", ".git", "山路" * 100):
+            with self.subTest(title=title):
+                name = run.book_folder(title)
+                self.assertEqual(Path(name).parts, (name,))
+                self.assertFalse(name.startswith("."))
+                self.assertLessEqual(len(name.encode()), 255)
+        (self.repo / "novels_version").symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "归档路径"):
+            self.execute("pass", 0)
+        self.assertFalse((self.root / "留灯").exists())
 
     def test_unlinked_new_note_is_refused(self):
         with self.assertRaisesRegex(ValueError, "链接"):
@@ -369,7 +421,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertGreater(reading(80, 80, 80)["rank"], reading(79, 100, 100)["rank"])
 
     def test_rubric_validates_percentage_thresholds_and_anchor_floors(self):
-        self.assertEqual({d["minimum"] for d in self.rubric["dimensions"]}, {80})
+        a.validate_inputs(self.case, run.load(run.HERE / "rubric.json"))
         self.assertEqual([d["id"] for d in self.rubric["dimensions"] if d.get("evidence") == 2],
                          ["engine", "payoff", "volumes"])
         dimension = self.rubric["dimensions"][0]

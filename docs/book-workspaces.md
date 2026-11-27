@@ -23,6 +23,8 @@ rg -n --no-ignore -m 2 -g 'pattern-cards.md' '代价' ../ani-book-skill/analyses
 
 ## 查原创规划
 
+大纲实验生成的候选放在 `../ani-book-skill/novels_version/<基线书名>/round-NNN-<实验编号>/`，每轮可直接打开总纲、分卷与开篇章纲。[按书名浏览](../../ani-book-skill/novels_version/) · [补齐归档和查看评分](../ani-book-skill/README.md#人工选版)
+
 原创工作区位于 `../ani-book-skill/novels/<作品目录>/`。用状态文件识别作品，目录内也可存放参考书 TXT。
 
 ```sh

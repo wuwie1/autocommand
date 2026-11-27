@@ -16,6 +16,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import assessment as a
 import providers
@@ -150,6 +151,70 @@ def verified_score(directory, rec):
     return score
 
 
+def book_folder(title):
+    title = a.require_text(title, "基线书名")
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', "_", title).strip(" .")
+    if name == title and len(name.encode("utf-8")) <= 240:
+        return name
+    prefix = name.encode("utf-8")[:220].decode("utf-8", errors="ignore")
+    return f"{prefix or '书稿'}-{a.digest(title)[:10]}"
+
+
+def archive_round(root, project, rec):
+    """Publish independent book copies. Retries preserve the author's edits to known copies."""
+    directory = rdir(root, rec["round"])
+    title = load(rdir(root, 0) / "plan.json")["title"]
+    relative = Path("novels_version") / book_folder(title) / f"{directory.name}-{root.name}"
+    target = project / relative
+    if not project.is_dir() or target.resolve() != target:
+        raise ValueError(f"书稿归档路径不在预期的项目目录中 {target}")
+    names = ["plan.json", *a.PRODUCTS]
+    if (directory / CITED).is_file():
+        names.append(CITED)
+    known = rec.get("novel_version") == relative.as_posix()
+    missing = []
+    for name in names:
+        source, copy = directory / name, target / name
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f"本轮缺少可归档的原稿 {source}")
+        if copy.is_symlink() or (copy.exists() and not copy.is_file()):
+            raise ValueError(f"书稿归档位置有其他文件 {copy}")
+        if not copy.exists():
+            missing.append(name)
+        elif not known and copy.read_bytes() != source.read_bytes():
+            raise ValueError(f"书稿归档已有不同内容，已保留 {copy}")
+    if missing:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=target.parent, prefix=".archive-") as tmp:
+            stage = Path(tmp) / "round"
+            stage.mkdir()
+            for name in missing:
+                shutil.copy(directory / name, stage / name)
+            if target.exists():
+                for name in missing:
+                    os.link(stage / name, target / name)
+            else:
+                stage.rename(target)
+    if not known:
+        rec["novel_version"] = relative.as_posix()
+        save(directory / "round.json", rec)
+    return target
+
+
+def archive(root):
+    """Backfill generated rounds without invoking the generator or judge."""
+    with lock(root / ".run.lock"):
+        manifest = load(root / "run.json")
+        for rec in trials(root):
+            directory = rdir(root, rec["round"])
+            if rec["status"] in SCORED:
+                verified_score(directory, rec)
+            elif not all((directory / name).is_file() for name in ("plan.json", *a.PRODUCTS)):
+                continue
+            print(archive_round(root, Path(manifest["project"]), rec))
+        publish(root, manifest, load(root / "inputs/rubric.json"))
+
+
 def publish(root, manifest, rubric):
     max_score = rubric["scale"][-1]
     generator = manifest["generator"]
@@ -181,6 +246,9 @@ def publish(root, manifest, rubric):
         elif status in {"error", "invalid"}:
             rows.append(dict(**base, reason=rec.get("error", "")))
         docs = [f"[{f}]({rel}/{f})" for f in (*a.PRODUCTS, CITED) if (directory / f).is_file()]
+        if rec.get("novel_version"):
+            version = Path(manifest["project"]) / rec["novel_version"]
+            docs.append(f"[书稿目录]({quote(os.path.relpath(version, root))}/)")
         if score:
             docs.append(f"[逐项评分]({rel}/score.json)")
         if (directory / "proposal.json").is_file():
@@ -392,6 +460,8 @@ def execute(root, m, fixed, rubric):
                     raise ValueError(f"实验产物有人工变动，保留现场 {target}")
                 if not target.exists():
                     write(target, text)
+            stage = "archive"
+            archive_round(root, repo, rec)
             stage = "judge"
             score = judge(directory, m, fixed, rubric, docs, citations)
             score_digest = a.digest(read(directory / "score.json"))
@@ -502,6 +572,8 @@ def main():
     again = sub.add_parser("resume", help="从已持久化的阶段接续")
     again.add_argument("id")
     again.add_argument("--timeout", type=int, help="改用新的单次调用超时秒数")
+    backfill = sub.add_parser("archive", help="把已生成的各轮大纲补到目标项目的 novels_version")
+    backfill.add_argument("id")
     select = sub.add_parser("select", help="记录人工选择的候选版本")
     select.add_argument("id")
     select.add_argument("round", type=int)
@@ -518,6 +590,8 @@ def main():
         start(args)
     elif args.command == "resume":
         resume(run_path(args.id), args.timeout)
+    elif args.command == "archive":
+        archive(run_path(args.id))
     else:
         choose(run_path(args.id), args.round, args.note)
 
